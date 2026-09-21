@@ -59,7 +59,7 @@
         document.head.appendChild(style);
     }
 
-    // Register configuration command in Tampermonkey menu
+    // Register configuration command in Tampermonkey menu (still keeps it for PC users)
     GM_registerMenuCommand("TRPT: Set Faction API Key", configureApiKey);
 
     function getApiKey() {
@@ -83,8 +83,10 @@
         
         const apiKey = getApiKey();
         if (!apiKey) {
-            console.warn("TRPT: Faction API Key is missing. Click Tampermonkey icon -> TRPT: Set Faction API Key.");
+            // TORN PDA FIX: Automatically prompt for the key if missing
+            console.warn("TRPT: Faction API Key is missing. Prompting user...");
             isFetchingRevives = false;
+            configureApiKey();
             return;
         }
 
@@ -101,7 +103,8 @@
                     } else {
                         console.error("TRPT: Sheet returned an error:", data.error || "Unknown error");
                         if(data.error && data.error.includes("Unauthorized")) {
-                            alert("TRPT Error: The API Key you entered does not match the server's key. Please update it in the Tampermonkey menu.");
+                            alert("TRPT Error: The API Key you entered does not match the server's key. Please update it.");
+                            configureApiKey(); // Also prompt on PDA if key is explicitly unauthorized
                         }
                     }
                 } catch (e) {
