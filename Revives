@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Revive Payment Tracker Faction Shared
 // @namespace    https://torn.com
-// @version      3.8.3
+// @version      3.8.4
 // @description  Track revive payments globally across your faction using Google Sheets backend & auto payment matching
 // @author       You
 // @match        https://www.torn.com/*
@@ -20,7 +20,6 @@
 (function() {
     'use strict';
 
-    // UPDATED GOOGLE SCRIPT URL HERE
     const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxkcp47WfCfa5B5vE18DpssAvmZHCwYUfgSvApeE1GW852yBsJz-bFgQGACQQlgXFO8/exec';
     const STORAGE_KEY_APIKEY = 'trpt_api_keys';
 
@@ -45,6 +44,7 @@
             z-index: 99999 !important;
             white-space: nowrap !important;
             height: 18px !important;
+            vertical-align: middle !important;
         }
         .trpt-badge.paid { background-color: #28a745 !important; }
         .trpt-badge.unpaid { background-color: #dc3545 !important; }
@@ -157,7 +157,12 @@
     function injectBadge(element, playerId) {
         if (!sharedRevivesCache) return;
         const status = sharedRevivesCache[playerId];
-        let existingBadge = element.querySelector('.trpt-badge');
+        
+        // Look for the badge directly AFTER the element, rather than inside it
+        let existingBadge = null;
+        if (element.nextElementSibling && element.nextElementSibling.classList.contains('trpt-badge')) {
+            existingBadge = element.nextElementSibling;
+        }
 
         if (!status) {
             if (existingBadge) existingBadge.remove();
@@ -185,14 +190,15 @@
             updatePaymentStatusOnSheet(playerId, status);
         });
 
-        element.appendChild(badge);
+        // INJECT AFTER the link so Torn's CSS doesn't hide it
+        element.insertAdjacentElement('afterend', badge);
     }
 
     // Scans DOM elements across various pages to find Player IDs
     function processPageUi() {
         if (!sharedRevivesCache) return;
 
-        // 1. Profile Pages
+        // 1. Profile Pages (The main profile header)
         if (window.location.href.includes('profiles.php')) {
             const profileNameHeader = document.querySelector('.profile-wrapper .title .name');
             if (profileNameHeader) {
@@ -205,12 +211,15 @@
         }
 
         // 2. Hospital List & General User Links
-        const userLinks = document.querySelectorAll('a[href*="profiles.php?XID="]');
+        // Broadened the search to catch any link containing XID= (Torn has variations)
+        const userLinks = document.querySelectorAll('a[href*="XID="]');
         userLinks.forEach(link => {
             const href = link.getAttribute('href');
+            // Ensure we are grabbing the XID correctly
             const match = href.match(/XID=(\d+)/i);
             if (match && match[1]) {
                 const playerId = match[1];
+                // Check to ensure the link has text (ignores image-only links like attack icons)
                 if (link.innerText && link.innerText.trim().length > 0) {
                     injectBadge(link, playerId);
                 }
@@ -220,7 +229,7 @@
 
     // Initialization and periodic sync
     fetchReviveStatusFromSheet();
-    setInterval(fetchReviveStatusFromSheet, 180000); // Increased to 3 minutes to save GAS quotas
+    setInterval(fetchReviveStatusFromSheet, 180000); // 3 minutes
 
     // Monitor page updates for dynamic elements (Debounced for performance)
     let debounceTimer = null;
