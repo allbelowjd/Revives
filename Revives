@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Revive Payment Tracker Faction Shared
 // @namespace    https://torn.com
-// @version      3.8.2
+// @version      3.8.3
 // @description  Track revive payments globally across your faction using Google Sheets backend & auto payment matching
 // @author       You
 // @match        https://www.torn.com/*
@@ -13,7 +13,6 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
-// @connect      api.torn.com
 // @connect      script.google.com
 // @connect      script.googleusercontent.com
 // ==/UserScript==
@@ -21,7 +20,8 @@
 (function() {
     'use strict';
 
-    const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwrGdxSIxZupwZddypRhLTVYinjsRZ9ALT1FP5ad4ILLKfj_HsObFkWJZ1ch2Ydd5SR/exec';
+    // UPDATED GOOGLE SCRIPT URL HERE
+    const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxkcp47WfCfa5B5vE18DpssAvmZHCwYUfgSvApeE1GW852yBsJz-bFgQGACQQlgXFO8/exec';
     const STORAGE_KEY_APIKEY = 'trpt_api_keys';
 
     let sharedRevivesCache = null;
@@ -60,7 +60,7 @@
     }
 
     // Register configuration command in Tampermonkey menu
-    GM_registerMenuCommand("TRPT: Set Torn API Key", configureApiKey);
+    GM_registerMenuCommand("TRPT: Set Faction API Key", configureApiKey);
 
     function getApiKey() {
         return GM_getValue(STORAGE_KEY_APIKEY, "");
@@ -68,7 +68,7 @@
 
     function configureApiKey() {
         const currentKey = getApiKey();
-        const newKey = prompt("Please enter your Torn API Key (Requires Faction permissions):", currentKey);
+        const newKey = prompt("Please enter the Faction Tracker API Key (Used to authorize with the Google Sheet):", currentKey);
         if (newKey !== null) {
             GM_setValue(STORAGE_KEY_APIKEY, newKey.trim());
             alert("API Key saved successfully! Refreshing data...");
@@ -80,9 +80,10 @@
     function fetchReviveStatusFromSheet() {
         if (isFetchingRevives) return;
         isFetchingRevives = true;
+        
         const apiKey = getApiKey();
         if (!apiKey) {
-            console.warn("TRPT: Torn API Key is missing. Click Tampermonkey icon -> TRPT: Set Torn API Key.");
+            console.warn("TRPT: Faction API Key is missing. Click Tampermonkey icon -> TRPT: Set Faction API Key.");
             isFetchingRevives = false;
             return;
         }
@@ -99,6 +100,9 @@
                         processPageUi();
                     } else {
                         console.error("TRPT: Sheet returned an error:", data.error || "Unknown error");
+                        if(data.error && data.error.includes("Unauthorized")) {
+                            alert("TRPT Error: The API Key you entered does not match the server's key. Please update it in the Tampermonkey menu.");
+                        }
                     }
                 } catch (e) {
                     console.error("TRPT: Failed to parse spreadsheet response", e);
@@ -137,6 +141,9 @@
                         if (sharedRevivesCache) {
                             sharedRevivesCache[playerId] = currentStatus;
                             processPageUi();
+                        }
+                        if(data.error && data.error.includes("Unauthorized")) {
+                            alert("TRPT Sync Error: Invalid API key.");
                         }
                     }
                 } catch(e) {
@@ -213,11 +220,15 @@
 
     // Initialization and periodic sync
     fetchReviveStatusFromSheet();
-    setInterval(fetchReviveStatusFromSheet, 60000); // Sync global cache every 60 seconds
+    setInterval(fetchReviveStatusFromSheet, 180000); // Increased to 3 minutes to save GAS quotas
 
-    // Monitor page updates for dynamic elements (AJAX updates on Torn)
+    // Monitor page updates for dynamic elements (Debounced for performance)
+    let debounceTimer = null;
     const observer = new MutationObserver(() => {
-        processPageUi();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            processPageUi();
+        }, 300);
     });
     observer.observe(document.body, { childList: true, subtree: true });
 
