@@ -1,12 +1,7 @@
-Here is the complete script with your original `Revives` URLs restored and the version bumped to **3.9.6**.
-
-*(Note: Just make sure the file name in your GitHub repository is named exactly `Revives` without any extensions, otherwise the auto-updater won't be able to find it).*
-
-```javascript
 // ==UserScript==
 // @name         Torn Revive Payment Tracker Faction Shared
 // @namespace    https://torn.com
-// @version      3.9.6
+// @version      3.9.7
 // @description  Track revive payments globally across your faction using Google Sheets backend & auto payment matching
 // @author       You
 // @match        *://*.torn.com/*
@@ -31,25 +26,12 @@ Here is the complete script with your original `Revives` URLs restored and the v
     let sharedRevivesCache = null;
     let isFetchingRevives = false;
 
-    function waitForBody(callback) {
-        if (document.body) {
-            callback();
-        } else {
-            const observer = new MutationObserver(function(mutations, me) {
-                if (document.body) {
-                    me.disconnect();
-                    callback();
-                }
-            });
-            observer.observe(document.documentElement, { childList: true });
-        }
-    }
-
     function initScript() {
-        // --- PERMANENT SETTINGS BUTTON ---
+        // --- PERMANENT SETTINGS BUTTON (MOVED TO TOP RIGHT) ---
         const configBtn = document.createElement('div');
         configBtn.innerHTML = '⚙️ TRPT';
-        configBtn.style = "position: fixed; bottom: 15px; right: 15px; background: #333; color: #fff; padding: 6px 12px; z-index: 9999999; font-family: sans-serif; border: 1px solid #555; border-radius: 20px; cursor: pointer; font-size: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.5); opacity: 0.8;";
+        // Moved to top: 65px so it sits under the Torn top navbar, away from PDA's bottom menus
+        configBtn.style = "position: fixed; top: 65px; right: 10px; background: #222; color: #0f0; padding: 6px 12px; z-index: 2147483647; font-family: sans-serif; border: 2px solid #0f0; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.8);";
         configBtn.onclick = () => showApiKeyUI();
         document.body.appendChild(configBtn);
         // ---------------------------------
@@ -66,8 +48,8 @@ Here is the complete script with your original `Revives` URLs restored and the v
             .trpt-badge.unpaid { background-color: #dc3545 !important; }
             
             #trpt-api-prompt {
-                position: fixed; top: 20%; left: 50%; transform: translateX(-50%);
-                background: #222; color: #fff; padding: 20px; z-index: 9999999;
+                position: fixed; top: 25%; left: 50%; transform: translateX(-50%);
+                background: #222; color: #fff; padding: 20px; z-index: 2147483647;
                 border: 2px solid #777; border-radius: 8px; width: 85%; max-width: 350px;
                 text-align: center; box-shadow: 0 5px 20px rgba(0,0,0,0.9); font-family: sans-serif;
             }
@@ -119,7 +101,7 @@ Here is the complete script with your original `Revives` URLs restored and the v
 
         document.getElementById('trpt-api-save').addEventListener('click', () => {
             const newKey = document.getElementById('trpt-api-input').value.trim();
-            if (newKey) {
+            if (newKey !== "") {
                 GM_setValue(STORAGE_KEY_APIKEY, newKey);
                 document.body.removeChild(container);
                 fetchReviveStatusFromSheet();
@@ -256,8 +238,12 @@ Here is the complete script with your original `Revives` URLs restored and the v
         });
     }
 
-    waitForBody(initScript);
+    // Bulletproof mobile loader
+    const checkReady = setInterval(() => {
+        if (document.body) {
+            clearInterval(checkReady);
+            initScript();
+        }
+    }, 100);
 
 })();
-
-```
