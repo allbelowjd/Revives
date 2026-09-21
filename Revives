@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         Torn Revive Payment Tracker Faction Shared
 // @namespace    https://torn.com
-// @version      3.9.2 (PDA Popup Fix)
+// @version      3.9.3 (PDA Failsafe)
 // @description  Track revive payments globally across your faction using Google Sheets backend & auto payment matching
 // @author       You
-// @match        https://www.torn.com/*
-// @run-at       document-idle
+// @match        *://*.torn.com/*
+// @include      *://*.torn.com/*
+// @run-at       document-end
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @connect      script.google.com
@@ -24,56 +24,88 @@
     let sharedRevivesCache = null;
     let isFetchingRevives = false;
 
-    const badgeCSS = `
-        .trpt-badge {
-            font-size: 11px !important; padding: 2px 6px !important; margin-left: 6px !important;
-            margin-right: 6px !important; border-radius: 3px !important; font-weight: bold !important;
-            color: #ffffff !important; display: inline-flex !important; align-items: center !important;
-            justify-content: center !important; cursor: pointer !important; box-shadow: 0 1px 2px rgba(0,0,0,0.3) !important;
-            z-index: 99999 !important; white-space: nowrap !important; height: 18px !important; vertical-align: middle !important;
+    // Failsafe to ensure we don't try to draw UI before the page exists
+    function waitForBody(callback) {
+        if (document.body) {
+            callback();
+        } else {
+            const observer = new MutationObserver(function(mutations, me) {
+                if (document.body) {
+                    me.disconnect();
+                    callback();
+                }
+            });
+            observer.observe(document.documentElement, { childList: true });
         }
-        .trpt-badge.paid { background-color: #28a745 !important; }
-        .trpt-badge.unpaid { background-color: #dc3545 !important; }
-        
-        #trpt-api-prompt {
-            position: fixed; top: 30%; left: 50%; transform: translateX(-50%);
-            background: #333; color: #fff; padding: 20px; z-index: 9999999;
-            border: 2px solid #555; border-radius: 8px; width: 80%; max-width: 300px;
-            text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.7); font-family: sans-serif;
-        }
-    `;
-
-    if (typeof GM_addStyle !== 'undefined') {
-        GM_addStyle(badgeCSS);
-    } else {
-        const style = document.createElement('style');
-        style.type = 'text/css';
-        style.appendChild(document.createTextNode(badgeCSS));
-        document.head.appendChild(style);
     }
 
-    // Still keep PC menu command
-    GM_registerMenuCommand("TRPT: Set Faction API Key", showApiKeyUI);
+    function initScript() {
+        // --- TEMPORARY DEBUG VISUALIZER ---
+        const debugBox = document.createElement('div');
+        debugBox.style = "position: fixed; top: 10px; left: 10px; background: #000; color: #0f0; padding: 5px 10px; z-index: 9999999; font-family: monospace; border: 1px solid #0f0; border-radius: 5px; pointer-events: none; font-size: 10px;";
+        debugBox.innerText = "TRPT Script is Alive. Key: " + (getApiKey() || "MISSING");
+        document.body.appendChild(debugBox);
+        // ----------------------------------
+
+        const badgeCSS = `
+            .trpt-badge {
+                font-size: 11px !important; padding: 2px 6px !important; margin-left: 6px !important;
+                margin-right: 6px !important; border-radius: 3px !important; font-weight: bold !important;
+                color: #ffffff !important; display: inline-flex !important; align-items: center !important;
+                justify-content: center !important; cursor: pointer !important; box-shadow: 0 1px 2px rgba(0,0,0,0.3) !important;
+                z-index: 99999 !important; white-space: nowrap !important; height: 18px !important; vertical-align: middle !important;
+            }
+            .trpt-badge.paid { background-color: #28a745 !important; }
+            .trpt-badge.unpaid { background-color: #dc3545 !important; }
+            
+            #trpt-api-prompt {
+                position: fixed; top: 20%; left: 50%; transform: translateX(-50%);
+                background: #222; color: #fff; padding: 20px; z-index: 9999999;
+                border: 2px solid #777; border-radius: 8px; width: 85%; max-width: 350px;
+                text-align: center; box-shadow: 0 5px 20px rgba(0,0,0,0.9); font-family: sans-serif;
+            }
+        `;
+
+        if (typeof GM_addStyle !== 'undefined') {
+            GM_addStyle(badgeCSS);
+        } else {
+            const style = document.createElement('style');
+            style.type = 'text/css';
+            style.appendChild(document.createTextNode(badgeCSS));
+            document.head.appendChild(style);
+        }
+
+        fetchReviveStatusFromSheet();
+        setInterval(fetchReviveStatusFromSheet, 180000);
+
+        let debounceTimer = null;
+        const observer = new MutationObserver(() => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                processPageUi();
+            }, 300);
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
 
     function getApiKey() {
         return GM_getValue(STORAGE_KEY_APIKEY, "");
     }
 
-    // TornPDA Safe UI Prompt
     function showApiKeyUI(errorMessage = "") {
-        if (document.getElementById('trpt-api-prompt')) return; // Don't open twice
+        if (document.getElementById('trpt-api-prompt')) return; 
 
         const container = document.createElement('div');
         container.id = 'trpt-api-prompt';
         
         container.innerHTML = `
-            <h3 style="margin-top:0; color:white; font-size:16px;">TRPT Setup</h3>
-            ${errorMessage ? `<p style="color:#ff6b6b; font-size:12px; margin-bottom:10px;">${errorMessage}</p>` : ''}
-            <p style="font-size:13px; margin-bottom:10px; color:#ccc;">Enter Faction Tracker API Key:</p>
-            <input type="text" id="trpt-api-input" style="width:90%; padding:8px; margin-bottom:15px; color:black; border-radius:4px; border:none;" value="${getApiKey()}"/>
+            <h3 style="margin-top:0; color:white; font-size:18px;">TRPT Setup</h3>
+            ${errorMessage ? `<p style="color:#ff6b6b; font-size:14px; margin-bottom:10px; font-weight:bold;">${errorMessage}</p>` : ''}
+            <p style="font-size:14px; margin-bottom:10px; color:#ddd;">Enter Faction Tracker API Key:</p>
+            <input type="text" id="trpt-api-input" style="width:90%; padding:10px; margin-bottom:15px; color:black; border-radius:4px; border:none; font-size:14px;" value="${getApiKey()}"/>
             <br/>
-            <button id="trpt-api-save" style="padding:8px 15px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">Save & Run</button>
-            <button id="trpt-api-cancel" style="padding:8px 15px; background:#666; color:white; border:none; border-radius:4px; cursor:pointer; margin-left:10px;">Cancel</button>
+            <button id="trpt-api-save" style="padding:10px 20px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold; font-size:14px;">Save & Run</button>
+            <button id="trpt-api-cancel" style="padding:10px 20px; background:#666; color:white; border:none; border-radius:4px; cursor:pointer; margin-left:10px; font-size:14px;">Cancel</button>
         `;
 
         document.body.appendChild(container);
@@ -83,6 +115,11 @@
             if (newKey) {
                 GM_setValue(STORAGE_KEY_APIKEY, newKey);
                 document.body.removeChild(container);
+                
+                // Update debug box immediately
+                const debugBox = document.querySelector('div[style*="TRPT Script is Alive"]');
+                if(debugBox) debugBox.innerText = "TRPT Script is Alive. Key: " + newKey;
+
                 fetchReviveStatusFromSheet();
             }
         });
@@ -118,9 +155,7 @@
                             showApiKeyUI("Error: Invalid API Key. Please re-enter.");
                         }
                     }
-                } catch (e) {
-                    console.error("TRPT: Failed to parse response", e);
-                }
+                } catch (e) {}
             },
             onerror: function(err) {
                 isFetchingRevives = false;
@@ -148,11 +183,8 @@
                     const data = JSON.parse(response.responseText);
                     if (!data || !data.success) {
                         if (sharedRevivesCache) {
-                            sharedRevivesCache[playerId] = currentStatus; // Revert on fail
+                            sharedRevivesCache[playerId] = currentStatus; 
                             processPageUi();
-                        }
-                        if(data.error && data.error.includes("Unauthorized")) {
-                            showApiKeyUI("Sync Error: API Key invalid or expired.");
                         }
                     }
                 } catch(e) {}
@@ -222,16 +254,7 @@
         });
     }
 
-    fetchReviveStatusFromSheet();
-    setInterval(fetchReviveStatusFromSheet, 180000);
-
-    let debounceTimer = null;
-    const observer = new MutationObserver(() => {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-            processPageUi();
-        }, 300);
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
+    // Start the script only after confirming the body is ready
+    waitForBody(initScript);
 
 })();
