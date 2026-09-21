@@ -1,13 +1,11 @@
 // ==UserScript==
 // @name         Torn Revive Payment Tracker Faction Shared
 // @namespace    https://torn.com
-// @version      3.9
+// @version      3.9.2 (PDA Popup Fix)
 // @description  Track revive payments globally across your faction using Google Sheets backend & auto payment matching
 // @author       You
 // @match        https://www.torn.com/*
 // @run-at       document-idle
-// @downloadURL  https://raw.githubusercontent.com/allbelowjd/Revives/main/Revives.user.js
-// @updateURL    https://raw.githubusercontent.com/allbelowjd/Revives/main/Revives.user.js
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -26,28 +24,23 @@
     let sharedRevivesCache = null;
     let isFetchingRevives = false;
 
-    // CSS styling properly wrapped as a template literal string
     const badgeCSS = `
         .trpt-badge {
-            font-size: 11px !important;
-            padding: 2px 6px !important;
-            margin-left: 6px !important;
-            margin-right: 6px !important;
-            border-radius: 3px !important;
-            font-weight: bold !important;
-            color: #ffffff !important;
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            cursor: pointer !important;
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
-            z-index: 99999 !important;
-            white-space: nowrap !important;
-            height: 18px !important;
-            vertical-align: middle !important;
+            font-size: 11px !important; padding: 2px 6px !important; margin-left: 6px !important;
+            margin-right: 6px !important; border-radius: 3px !important; font-weight: bold !important;
+            color: #ffffff !important; display: inline-flex !important; align-items: center !important;
+            justify-content: center !important; cursor: pointer !important; box-shadow: 0 1px 2px rgba(0,0,0,0.3) !important;
+            z-index: 99999 !important; white-space: nowrap !important; height: 18px !important; vertical-align: middle !important;
         }
         .trpt-badge.paid { background-color: #28a745 !important; }
         .trpt-badge.unpaid { background-color: #dc3545 !important; }
+        
+        #trpt-api-prompt {
+            position: fixed; top: 30%; left: 50%; transform: translateX(-50%);
+            background: #333; color: #fff; padding: 20px; z-index: 9999999;
+            border: 2px solid #555; border-radius: 8px; width: 80%; max-width: 300px;
+            text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.7); font-family: sans-serif;
+        }
     `;
 
     if (typeof GM_addStyle !== 'undefined') {
@@ -59,34 +52,54 @@
         document.head.appendChild(style);
     }
 
-    // Register configuration command in Tampermonkey menu (still keeps it for PC users)
-    GM_registerMenuCommand("TRPT: Set Faction API Key", configureApiKey);
+    // Still keep PC menu command
+    GM_registerMenuCommand("TRPT: Set Faction API Key", showApiKeyUI);
 
     function getApiKey() {
         return GM_getValue(STORAGE_KEY_APIKEY, "");
     }
 
-    function configureApiKey() {
-        const currentKey = getApiKey();
-        const newKey = prompt("Please enter the Faction Tracker API Key (Used to authorize with the Google Sheet):", currentKey);
-        if (newKey !== null) {
-            GM_setValue(STORAGE_KEY_APIKEY, newKey.trim());
-            alert("API Key saved successfully! Refreshing data...");
-            fetchReviveStatusFromSheet();
-        }
+    // TornPDA Safe UI Prompt
+    function showApiKeyUI(errorMessage = "") {
+        if (document.getElementById('trpt-api-prompt')) return; // Don't open twice
+
+        const container = document.createElement('div');
+        container.id = 'trpt-api-prompt';
+        
+        container.innerHTML = `
+            <h3 style="margin-top:0; color:white; font-size:16px;">TRPT Setup</h3>
+            ${errorMessage ? `<p style="color:#ff6b6b; font-size:12px; margin-bottom:10px;">${errorMessage}</p>` : ''}
+            <p style="font-size:13px; margin-bottom:10px; color:#ccc;">Enter Faction Tracker API Key:</p>
+            <input type="text" id="trpt-api-input" style="width:90%; padding:8px; margin-bottom:15px; color:black; border-radius:4px; border:none;" value="${getApiKey()}"/>
+            <br/>
+            <button id="trpt-api-save" style="padding:8px 15px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">Save & Run</button>
+            <button id="trpt-api-cancel" style="padding:8px 15px; background:#666; color:white; border:none; border-radius:4px; cursor:pointer; margin-left:10px;">Cancel</button>
+        `;
+
+        document.body.appendChild(container);
+
+        document.getElementById('trpt-api-save').addEventListener('click', () => {
+            const newKey = document.getElementById('trpt-api-input').value.trim();
+            if (newKey) {
+                GM_setValue(STORAGE_KEY_APIKEY, newKey);
+                document.body.removeChild(container);
+                fetchReviveStatusFromSheet();
+            }
+        });
+
+        document.getElementById('trpt-api-cancel').addEventListener('click', () => {
+            document.body.removeChild(container);
+        });
     }
 
-    // Fetch payment statuses globally from Google Sheets
     function fetchReviveStatusFromSheet() {
         if (isFetchingRevives) return;
         isFetchingRevives = true;
         
         const apiKey = getApiKey();
         if (!apiKey) {
-            // TORN PDA FIX: Automatically prompt for the key if missing
-            console.warn("TRPT: Faction API Key is missing. Prompting user...");
             isFetchingRevives = false;
-            configureApiKey();
+            showApiKeyUI();
             return;
         }
 
@@ -101,30 +114,25 @@
                         sharedRevivesCache = data.revives;
                         processPageUi();
                     } else {
-                        console.error("TRPT: Sheet returned an error:", data.error || "Unknown error");
                         if(data.error && data.error.includes("Unauthorized")) {
-                            alert("TRPT Error: The API Key you entered does not match the server's key. Please update it.");
-                            configureApiKey(); // Also prompt on PDA if key is explicitly unauthorized
+                            showApiKeyUI("Error: Invalid API Key. Please re-enter.");
                         }
                     }
                 } catch (e) {
-                    console.error("TRPT: Failed to parse spreadsheet response", e);
+                    console.error("TRPT: Failed to parse response", e);
                 }
             },
             onerror: function(err) {
                 isFetchingRevives = false;
-                console.error("TRPT: Network error fetching sheet statuses", err);
             }
         });
     }
 
-    // Send a payload to toggle or update payment status on the sheet
     function updatePaymentStatusOnSheet(playerId, currentStatus) {
         const apiKey = getApiKey();
         if (!apiKey) return;
         const nextStatus = currentStatus === 'unpaid' ? 'paid' : 'unpaid';
 
-        // Optimistic UI update
         if (sharedRevivesCache) {
             sharedRevivesCache[playerId] = nextStatus;
             processPageUi();
@@ -139,29 +147,23 @@
                 try {
                     const data = JSON.parse(response.responseText);
                     if (!data || !data.success) {
-                        console.error("TRPT: Error sync updating status:", data.error);
-                        // Revert cache on failure
                         if (sharedRevivesCache) {
-                            sharedRevivesCache[playerId] = currentStatus;
+                            sharedRevivesCache[playerId] = currentStatus; // Revert on fail
                             processPageUi();
                         }
                         if(data.error && data.error.includes("Unauthorized")) {
-                            alert("TRPT Sync Error: Invalid API key.");
+                            showApiKeyUI("Sync Error: API Key invalid or expired.");
                         }
                     }
-                } catch(e) {
-                    console.error("TRPT: Failed to parse sync response", e);
-                }
+                } catch(e) {}
             }
         });
     }
 
-    // Injects or updates the badge next to a player element
     function injectBadge(element, playerId) {
         if (!sharedRevivesCache) return;
         const status = sharedRevivesCache[playerId];
         
-        // Look for the badge directly AFTER the element, rather than inside it
         let existingBadge = null;
         if (element.nextElementSibling && element.nextElementSibling.classList.contains('trpt-badge')) {
             existingBadge = element.nextElementSibling;
@@ -172,7 +174,6 @@
             return;
         }
 
-        // Update badge if it already exists
         if (existingBadge) {
             if (!existingBadge.classList.contains(status)) {
                 existingBadge.className = `trpt-badge ${status}`;
@@ -181,48 +182,39 @@
             return;
         }
 
-        // Create new badge
         const badge = document.createElement('span');
         badge.className = `trpt-badge ${status}`;
         badge.innerText = status.toUpperCase();
-        badge.title = `Click to toggle tracking status for ID: ${playerId}`;
-
+        
         badge.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
             updatePaymentStatusOnSheet(playerId, status);
         });
 
-        // INJECT AFTER the link so Torn's CSS doesn't hide it
         element.insertAdjacentElement('afterend', badge);
     }
 
-    // Scans DOM elements across various pages to find Player IDs
     function processPageUi() {
         if (!sharedRevivesCache) return;
 
-        // 1. Profile Pages (The main profile header)
         if (window.location.href.includes('profiles.php')) {
             const profileNameHeader = document.querySelector('.profile-wrapper .title .name');
             if (profileNameHeader) {
                 const urlParams = new URLSearchParams(window.location.search);
-                const playerId = urlParams.get('XID');
+                const playerId = urlParams.get('XID') || urlParams.get('xid');
                 if (playerId) {
                     injectBadge(profileNameHeader, playerId);
                 }
             }
         }
 
-        // 2. Hospital List & General User Links
-        // Broadened the search to catch any link containing XID= (Torn has variations)
-        const userLinks = document.querySelectorAll('a[href*="XID="]');
+        const userLinks = document.querySelectorAll('a[href*="XID=" i]');
         userLinks.forEach(link => {
             const href = link.getAttribute('href');
-            // Ensure we are grabbing the XID correctly
             const match = href.match(/XID=(\d+)/i);
             if (match && match[1]) {
                 const playerId = match[1];
-                // Check to ensure the link has text (ignores image-only links like attack icons)
                 if (link.innerText && link.innerText.trim().length > 0) {
                     injectBadge(link, playerId);
                 }
@@ -230,11 +222,9 @@
         });
     }
 
-    // Initialization and periodic sync
     fetchReviveStatusFromSheet();
-    setInterval(fetchReviveStatusFromSheet, 180000); // 3 minutes
+    setInterval(fetchReviveStatusFromSheet, 180000);
 
-    // Monitor page updates for dynamic elements (Debounced for performance)
     let debounceTimer = null;
     const observer = new MutationObserver(() => {
         if (debounceTimer) clearTimeout(debounceTimer);
